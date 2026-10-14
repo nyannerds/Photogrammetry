@@ -3,13 +3,14 @@
 
 import {
   bounds, diagonal, weldMesh, subsetMesh, subsetPoints, triangleStats, meshComponents, fillComponentBounds, finishMoments,
-  detectUpAxis, detectFloor, clusterDecimate, bestYaw, rotateY,
+  detectUpAxis, detectFloor, heightRange, clusterDecimate, bestYaw, rotateY,
 } from './geometry.js';
 import { reorientToYUp } from './orient.js';
 
 export const DEFAULT_CLEAN = {
   up: 'auto',            // 'auto' | '+y' | '-y' | '+z' | '-z' | '+x' | '-x'
   floor: true,           // remove the dominant horizontal plane the object stands on
+  floorAt: 'auto',       // 'auto' or a fraction 0..1 of the scan's vertical range where the floor plane sits
   floorMargin: 0.012,    // extra trim above the floor plane, as a fraction of object height
   keep: 'auto',          // 'auto' (large + central) | 'largest' | 'all'
   minPiece: 0.05,        // detached pieces smaller than this fraction of the main piece are noise
@@ -198,13 +199,20 @@ export async function cleanScan(raw, params = {}, job) {
   let floor = null;
   let floorCut = -Infinity;
   if (p.floor) {
-    floor = detectFloor(cen, area);
+    if (typeof p.floorAt === 'number') {
+      const [lo, hi] = heightRange(cen);
+      floor = { y: lo + p.floorAt * (hi - lo), binWidth: (hi - lo) / 512, share: 0, range: [lo, hi], manual: true };
+    } else {
+      floor = detectFloor(cen, area);
+    }
     if (floor) {
       const band = Math.max(floor.binWidth * 3, (floor.range[1] - floor.range[0]) * 0.004);
       floorCut = floor.y + band;
       for (let u = 0; u < units; u++) if (unitY(u) <= floorCut) keep[u] = 0;
       floor.band = band;
-      log.push(`Floor plane found at height ${floor.y.toFixed(4)} (covers ${(floor.share * 100).toFixed(0)}% of the surface) and removed.`);
+      log.push(floor.manual
+        ? `Floor cut at height ${floor.y.toFixed(4)} (set by hand).`
+        : `Floor plane found at height ${floor.y.toFixed(4)} (covers ${(floor.share * 100).toFixed(0)}% of the surface) and removed.`);
     } else {
       log.push('No dominant floor plane found; skipping floor removal.');
     }

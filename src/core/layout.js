@@ -123,11 +123,20 @@ export function tileLayer(S, prev, next, nx, nz, rects, variant, jitter, rng) {
         if (lab[u] >= 0) continue;
         const ux = u % nx, uz = (u - ux) / nx;
         let best = -Infinity, bx = 0, bz = 0, br = -1;
+        // free cells around u in each direction bound where a rectangle through u can sit
+        let left = 0, right = 0, up = 0, down = 0;
+        while (left < 15 && ux - left - 1 >= 0 && S[uz * nx + ux - left - 1] && lab[uz * nx + ux - left - 1] < 0) left++;
+        while (right < 15 && ux + right + 1 < nx && S[uz * nx + ux + right + 1] && lab[uz * nx + ux + right + 1] < 0) right++;
+        while (up < 15 && uz - up - 1 >= 0 && S[(uz - up - 1) * nx + ux] && lab[(uz - up - 1) * nx + ux] < 0) up++;
+        while (down < 15 && uz + down + 1 < nz && S[(uz + down + 1) * nx + ux] && lab[(uz + down + 1) * nx + ux] < 0) down++;
         for (let ri = 0; ri < rects.length; ri++) {
           const R = rects[ri];
-          for (let x0 = ux - R.w + 1; x0 <= ux; x0++) for (let z0 = uz - R.d + 1; z0 <= uz; z0++) {
-            const sc = scoreRect(x0, z0, R, true);
-            if (sc > best) { best = sc; bx = x0; bz = z0; br = ri; }
+          if (R.w > left + right + 1 || R.d > up + down + 1) continue;
+          for (let x0 = Math.max(ux - R.w + 1, ux - left); x0 <= ux && x0 + R.w - 1 <= ux + right; x0++) {
+            for (let z0 = Math.max(uz - R.d + 1, uz - up); z0 <= uz && z0 + R.d - 1 <= uz + down; z0++) {
+              const sc = scoreRect(x0, z0, R, true);
+              if (sc > best) { best = sc; bx = x0; bz = z0; br = ri; }
+            }
           }
         }
         if (br >= 0) place(bx, bz, rects[br], br);
@@ -145,8 +154,15 @@ export function tileLayer(S, prev, next, nx, nz, rects, variant, jitter, rng) {
       const c = x + z * nx;
       if (!S[c] || lab[c] >= 0) continue;
       let best = -Infinity, bx = x, bz = z, br = -1;
+      // contiguous free cells from the anchor in the scan directions: a rectangle cannot be longer than that
+      let runX = 1, runZ = 1;
+      if (flipX) { while (runX < 16 && x - runX >= 0 && S[z * nx + x - runX] && lab[z * nx + x - runX] < 0) runX++; }
+      else { while (runX < 16 && x + runX < nx && S[z * nx + x + runX] && lab[z * nx + x + runX] < 0) runX++; }
+      if (flipZ) { while (runZ < 16 && z - runZ >= 0 && S[(z - runZ) * nx + x] && lab[(z - runZ) * nx + x] < 0) runZ++; }
+      else { while (runZ < 16 && z + runZ < nz && S[(z + runZ) * nx + x] && lab[(z + runZ) * nx + x] < 0) runZ++; }
       for (let ri = 0; ri < rects.length; ri++) {
         const R = rects[ri];
+        if (R.w > runX || R.d > runZ) continue;
         const x0 = flipX ? x - R.w + 1 : x;
         const z0 = flipZ ? z - R.d + 1 : z;
         const sc = scoreRect(x0, z0, R, false);
@@ -251,8 +267,11 @@ export async function layoutBricks(solidIn, dims, parts, opts = {}, job) {
   };
 
   // Refinement sweeps: now that every layer exists, re-tile each one knowing both its neighbours.
+  let dirty = new Uint8Array(ny).fill(1);
   const sweep = async (tries) => {
+    const nextDirty = new Uint8Array(ny);
     for (let y = 0; y < ny; y++) {
+      if (!dirty[y]) continue;
       const S = layerMask(y);
       const cur = labs[y];
       let any = false;
@@ -266,6 +285,7 @@ export async function layoutBricks(solidIn, dims, parts, opts = {}, job) {
       const oldCost = tilingCost({ placed: oldPlaced, lab: cur }, prev, next, nx, nz, crackW);
       const t = bestTiling(S, prev, next, nx, nz, rects, tries, rng, crackW);
       if (t.cost >= oldCost - 1e-9) continue;
+      nextDirty[y] = 1; if (y > 0) nextDirty[y - 1] = 1; if (y + 1 < ny) nextDirty[y + 1] = 1;
       for (const b of bricks) if (b.alive && b.y === y) b.alive = false;
       cur.fill(-1);
       for (const r of t.placed) {
@@ -275,6 +295,7 @@ export async function layoutBricks(solidIn, dims, parts, opts = {}, job) {
       }
       if (job && (y & 3) === 0) await job.tick();
     }
+    dirty = nextDirty;
     if (job) job.progress('layout', 1, 'Refining joints between layers…');
   };
   const sweeps = opts.sweeps ?? 1;
@@ -285,6 +306,7 @@ export async function layoutBricks(solidIn, dims, parts, opts = {}, job) {
       for (let extra = 0; extra < 4; extra++) {
         const st = seamStats(dims, labs);
         if (st.total < 1 || st.pct >= 97) break;
+        dirty.fill(1);
         await sweep(attempts * 2);
       }
     }
@@ -512,8 +534,8 @@ export async function layoutBricks(solidIn, dims, parts, opts = {}, job) {
     if (components().count <= 1 && !hangingBricks().length) break;
   }
 
-  /** Ruin & recreate: re-tile every brick of layer y that touches a window around cell c; returns an undo function. */
-  const windowRetile = (y, c, radius, tries) => {
+  /** Ruin & recreate, step 1: the bricks of layer y that touch a window around cell c. */
+  const gatherWindow = (y, c, radius) => {
     const lab = labs[y];
     const cx = c % nx, cz = (c - cx) / nx;
     const ids = new Set();
@@ -522,8 +544,12 @@ export async function layoutBricks(solidIn, dims, parts, opts = {}, job) {
         if (lab[zz * nx + xx] >= 0) ids.add(lab[zz * nx + xx]);
       }
     }
-    if (ids.size < 2) return null;
-    const olds = [...ids].map((id) => bricks[id]);
+    return [...ids].map((id) => bricks[id]);
+  };
+
+  /** Step 2: re-tile exactly the cells of `olds`; returns an undo function. */
+  const applyRetile = (y, olds, tries) => {
+    const lab = labs[y];
     const S2 = new Uint8Array(N);
     const cells = [];
     for (const b of olds) for (let zz = b.z; zz < b.z + b.d; zz++) for (let xx = b.x; xx < b.x + b.w; xx++) { S2[zz * nx + xx] = 1; cells.push(zz * nx + xx); }
@@ -545,16 +571,96 @@ export async function layoutBricks(solidIn, dims, parts, opts = {}, job) {
     };
   };
 
-  stages.afterRepair = hangingBricks().length;
-  // Seam polish: joints that still line up from one layer to the next get a spanning brick on either side of the joint.
-  const localCost = (y) => {
-    let count = 0;
-    for (const b of bricks) if (b.alive && b.y === y) count++;
-    let c = count;
-    if (y > 0) c += crackW * countCracks(labs[y], labs[y - 1], nx, nz);
-    if (y + 1 < ny) c += crackW * countCracks(labs[y], labs[y + 1], nx, nz);
-    return c;
+  // ---- local move evaluation: everything below looks only at the cells around the change -------------------------------
+  const footprintCells = (olds) => {
+    const cells = [];
+    for (const b of olds) for (let zz = b.z; zz < b.z + b.d; zz++) for (let xx = b.x; xx < b.x + b.w; xx++) cells.push(zz * nx + xx);
+    return cells;
   };
+  /** Ids of bricks directly above / below a brick. */
+  const verticalNeighbours = (b) => {
+    const out = new Set();
+    for (const dy of [-1, 1]) {
+      const yy = b.y + dy;
+      if (yy < 0 || yy >= ny) continue;
+      const L = labs[yy];
+      for (let zz = b.z; zz < b.z + b.d; zz++) for (let xx = b.x; xx < b.x + b.w; xx++) { const v = L[zz * nx + xx]; if (v >= 0) out.add(v); }
+    }
+    return out;
+  };
+  const edgesAround = (cells) => {
+    const set = new Set();
+    for (const c of cells) {
+      const x = c % nx;
+      set.add(c * 2); set.add(c * 2 + 1);
+      if (x > 0) set.add((c - 1) * 2);
+      if (c - nx >= 0) set.add((c - nx) * 2 + 1);
+    }
+    return set;
+  };
+  const cracksOn = (edges, lab, ref) => {
+    let n = 0;
+    for (const e of edges) {
+      const c = e >> 1;
+      let q;
+      if ((e & 1) === 0) { if ((c % nx) + 1 >= nx) continue; q = c + 1; } else { q = c + nx; if (q >= N) continue; }
+      if (lab[c] >= 0 && lab[q] >= 0 && lab[c] !== lab[q] && ref[c] >= 0 && ref[q] >= 0 && ref[c] !== ref[q]) n++;
+    }
+    return n;
+  };
+  const isSupported = (b) => {
+    if (b.y === 0) return true;
+    const below = labs[b.y - 1];
+    for (let zz = b.z; zz < b.z + b.d; zz++) for (let xx = b.x; xx < b.x + b.w; xx++) if (below[zz * nx + xx] >= 0) return true;
+    return false;
+  };
+  /**
+   * Connectivity is preserved if every new brick touches a neighbour above/below and the neighbours of each old brick
+   * are still linked to each other through the new bricks (a sufficient, purely local test).
+   */
+  const stillConnected = (news, oldNeighbourSets) => {
+    const parent = new Map();
+    const find = (a) => { while (parent.get(a) !== a) { parent.set(a, parent.get(parent.get(a))); a = parent.get(a); } return a; };
+    const add = (a) => { if (!parent.has(a)) parent.set(a, a); };
+    const union = (a, b) => { add(a); add(b); const ra = find(a), rb = find(b); if (ra !== rb) parent.set(ra, rb); };
+    for (const nb of news) {
+      const ns = verticalNeighbours(nb);
+      if (!ns.size) return false;
+      for (const v of ns) union(nb.id, v);
+    }
+    for (const set of oldNeighbourSets) {
+      let first = null;
+      for (const v of set) {
+        add(v);
+        if (first === null) first = v; else if (find(v) !== find(first)) return false;
+      }
+    }
+    return true;
+  };
+
+  /** Apply a re-tiling move only if it lowers the local cost and keeps support and connectivity. */
+  const attempt = (y, olds, applyFn) => {
+    const cells = footprintCells(olds);
+    const edges = edgesAround(cells);
+    const prev = y > 0 ? labs[y - 1] : null, next = y + 1 < ny ? labs[y + 1] : null;
+    const costOf = (count) => count + crackW * ((prev ? cracksOn(edges, labs[y], prev) : 0) + (next ? cracksOn(edges, labs[y], next) : 0));
+    const before = costOf(olds.length);
+    const oldNeighbours = olds.map(verticalNeighbours);
+    const len = bricks.length;
+    const undo = applyFn();
+    if (!undo) return false;
+    const news = bricks.slice(len);
+    let ok = costOf(news.length) < before - 1e-9;
+    if (ok) for (const nb of news) if (!isSupported(nb)) { ok = false; break; }
+    if (ok) ok = stillConnected(news, oldNeighbours);
+    if (!ok) { undo(); return false; }
+    return true;
+  };
+
+  stages.afterRepair = hangingBricks().length;
+  // Seam polish: joints that still line up from one layer to the next get a spanning brick on either side of the joint,
+  // or the bricks around them are re-tiled ("ruin & recreate"). Every move is judged on local cost only.
+  stages.afterRepair = hangingBricks().length;
   if (opts.polish !== false && TUNING.seamPolish && (opts.sweeps ?? 1) > 0) {
     let polished = 0;
     for (let pass = 0; pass < 3; pass++) {
@@ -573,7 +679,6 @@ export async function layoutBricks(solidIn, dims, parts, opts = {}, job) {
       }
       if (!cracks.length) break;
       let improved = 0;
-      let hangNow = hangingBricks().length, compNow = components().count;
       for (const cr of cracks) {
         const a = labs[cr.y], b = labs[cr.y + 1];
         if (a[cr.c] < 0 || a[cr.q] < 0 || a[cr.c] === a[cr.q] || b[cr.c] < 0 || b[cr.q] < 0 || b[cr.c] === b[cr.q]) continue; // already fixed
@@ -581,26 +686,26 @@ export async function layoutBricks(solidIn, dims, parts, opts = {}, job) {
         for (const layer of [cr.y + 1, cr.y]) {
           const lab = labs[layer];
           for (let which = 0; which < 4 && !done; which++) {
-            const before = localCost(layer);
-            const undo = tryBridge(bricks[lab[cr.c]], bricks[lab[cr.q]], cr.c, cr.q, M, which);
-            if (!undo) break;
+            const b1 = bricks[lab[cr.c]], b2 = bricks[lab[cr.q]];
+            let exhausted = false;
+            const ok = attempt(layer, [b1, b2], () => {
+              const undo = tryBridge(b1, b2, cr.c, cr.q, M, which);
+              if (!undo) exhausted = true;
+              return undo;
+            });
             evals++;
-            const hang = hangingBricks().length, comps = components().count;
-            if (localCost(layer) < before - 1e-9 && hang <= hangNow && comps <= compNow) { improved++; polished++; hangNow = hang; compNow = comps; done = true; break; }
-            undo();
+            if (ok) { done = true; improved++; polished++; }
+            else if (exhausted) break;
           }
           if (done) break;
         }
         for (const layer of [cr.y + 1, cr.y]) {
           for (const radius of [2, 3]) {
             if (done) break;
-            const before = localCost(layer);
-            const undo = windowRetile(layer, cr.c, radius, 10);
-            if (!undo) continue;
+            const olds = gatherWindow(layer, cr.c, radius);
+            if (olds.length < 2) continue;
             evals++;
-            const hang = hangingBricks().length, comps = components().count;
-            if (localCost(layer) < before - 1e-9 && hang <= hangNow && comps <= compNow) { improved++; polished++; hangNow = hang; compNow = comps; done = true; break; }
-            undo();
+            if (attempt(layer, olds, () => applyRetile(layer, olds, 10))) { done = true; improved++; polished++; }
           }
         }
         if (job && (improved & 15) === 15) await job.tick();
@@ -608,6 +713,11 @@ export async function layoutBricks(solidIn, dims, parts, opts = {}, job) {
       if (!improved) break;
     }
     bridged += polished;
+    // the local tests are sufficient, but verify globally once and repair if anything slipped through
+    if (components().count > 1 || hangingBricks().length) {
+      await repairFloating();
+      await repairHanging();
+    }
   }
   stages.afterPolish = hangingBricks().length;
 

@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BrickScan</title>
+<meta name="description" content="Turn a phone LiDAR scan into a buildable LEGO brick model with a parts list, cost estimate and step-by-step build order. Runs entirely offline in your browser.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='3' y='11' width='26' height='17' rx='3' fill='%23ffcf00'/%3E%3Crect x='7' y='5' width='7' height='7' rx='2' fill='%23ffcf00'/%3E%3Crect x='18' y='5' width='7' height='7' rx='2' fill='%23ffcf00'/%3E%3C/svg%3E">
+<style>/*STYLE*/</style>
+</head>
+<body>
+<a class="skip" href="#viewport">Skip to 3D view</a>
+<header class="top">
+  <div class="brand">
+    <svg class="logo" viewBox="0 0 32 32" aria-hidden="true"><rect x="3" y="11" width="26" height="17" rx="3" fill="currentColor"/><rect x="7" y="5" width="7" height="7" rx="2" fill="currentColor"/><rect x="18" y="5" width="7" height="7" rx="2" fill="currentColor"/></svg>
+    <h1>BrickScan</h1>
+    <span class="tagline">phone LiDAR scan → buildable LEGO model</span>
+  </div>
+  <div class="top-actions">
+    <span class="badge" id="badge-catalogue" title="Parts catalogue used for part numbers and prices">catalogue</span>
+    <span class="badge ok" id="badge-offline">Runs offline</span>
+    <button class="ghost" id="btn-help" type="button">How it works</button>
+  </div>
+</header>
+
+<main class="layout">
+  <!-- ======================= controls ======================= -->
+  <aside class="side" aria-label="Settings">
+    <section class="card" id="sec-scan">
+      <h2><span class="n">1</span>Scan</h2>
+      <label class="drop" id="drop" for="file">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <span><b>Choose a scan</b> or drop it anywhere<small>OBJ · PLY · USDZ · GLB · STL</small></span>
+        <input id="file" type="file" accept=".obj,.ply,.usdz,.usd,.usda,.usdc,.glb,.gltf,.stl">
+      </label>
+      <div class="demo-row">
+        <span class="muted">No scan handy? Try a demo:</span>
+        <div class="chips" id="demos">
+          <button type="button" class="chip" data-demo="shoebox">Shoebox</button>
+          <button type="button" class="chip" data-demo="compact">Powder compact</button>
+          <button type="button" class="chip" data-demo="controller">Controller</button>
+          <button type="button" class="chip" data-demo="mug">Mug</button>
+          <button type="button" class="chip" data-demo="sphere">Ball</button>
+        </div>
+      </div>
+      <p class="info" id="file-info" aria-live="polite"></p>
+    </section>
+
+    <section class="card" id="sec-clean">
+      <h2><span class="n">2</span>Clean up</h2>
+      <div class="field">
+        <label for="up">Which way is up?</label>
+        <select id="up">
+          <option value="auto">Auto-detect</option>
+          <option value="+y">+Y (most phone apps)</option>
+          <option value="+z">+Z</option>
+          <option value="-y">−Y</option>
+          <option value="-z">−Z</option>
+          <option value="+x">+X</option>
+          <option value="-x">−X</option>
+        </select>
+        <small id="up-hint" class="hint"></small>
+      </div>
+      <div class="field check">
+        <input type="checkbox" id="floor" checked>
+        <label for="floor">Remove floor / table</label>
+      </div>
+      <div class="field check">
+        <input type="checkbox" id="floorManual">
+        <label for="floorManual">Set floor height by hand</label>
+      </div>
+      <div class="field range" id="floorAt-field" hidden>
+        <label for="floorAt">Floor height <output id="floorAt-o">10%</output></label>
+        <input type="range" id="floorAt" min="0" max="100" step="0.5" value="10">
+        <small class="hint">The yellow plane in the Scan view shows the cut.</small>
+      </div>
+      <div class="field range">
+        <label for="floorMargin">Floor trim <output id="floorMargin-o">1.2%</output></label>
+        <input type="range" id="floorMargin" min="0" max="6" step="0.1" value="1.2">
+      </div>
+      <div class="field">
+        <label for="keep">Keep</label>
+        <select id="keep">
+          <option value="auto">The object (large + central)</option>
+          <option value="largest">Largest piece only</option>
+          <option value="all">Everything left</option>
+        </select>
+      </div>
+      <div class="field range">
+        <label for="minPiece">Noise filter <output id="minPiece-o">5%</output></label>
+        <input type="range" id="minPiece" min="0" max="40" step="1" value="5">
+      </div>
+      <div class="field two">
+        <div>
+          <label for="yawMode">Line up with studs</label>
+          <select id="yawMode"><option value="auto">Auto</option><option value="off">Off</option><option value="custom">Custom angle</option></select>
+        </div>
+        <div>
+          <label for="yawDeg">Angle °</label>
+          <input type="number" id="yawDeg" value="0" min="-180" max="180" step="1" disabled>
+        </div>
+      </div>
+      <div class="field">
+        <label for="unit">Scan units</label>
+        <select id="unit">
+          <option value="auto">Auto-detect</option><option value="m">Metres</option><option value="cm">Centimetres</option>
+          <option value="mm">Millimetres</option><option value="in">Inches</option>
+        </select>
+      </div>
+      <details class="adv">
+        <summary>Crop box (trim leftovers)</summary>
+        <div class="crop">
+          <label>X</label><input type="range" id="cropX0" min="0" max="100" value="0" aria-label="Crop X from"><input type="range" id="cropX1" min="0" max="100" value="100" aria-label="Crop X to">
+          <label>Height</label><input type="range" id="cropY0" min="0" max="100" value="0" aria-label="Crop height from"><input type="range" id="cropY1" min="0" max="100" value="100" aria-label="Crop height to">
+          <label>Z</label><input type="range" id="cropZ0" min="0" max="100" value="0" aria-label="Crop Z from"><input type="range" id="cropZ1" min="0" max="100" value="100" aria-label="Crop Z to">
+        </div>
+      </details>
+      <p class="info" id="clean-readout" aria-live="polite"></p>
+    </section>
+
+    <section class="card" id="sec-size">
+      <h2><span class="n">3</span>Size</h2>
+      <div class="field">
+        <label for="scaleMode">Set the size of the LEGO model by</label>
+        <select id="scaleMode">
+          <option value="longest">Longest side</option>
+          <option value="height">Height</option>
+          <option value="width">Width</option>
+          <option value="depth">Depth</option>
+          <option value="budget">Number of bricks (budget)</option>
+        </select>
+      </div>
+      <div class="field range">
+        <label for="sizeNum"><span id="size-label">Longest side (cm)</span></label>
+        <div class="num-range">
+          <input type="range" id="sizeRange" min="6" max="60" step="1" value="24" aria-label="Size slider">
+          <input type="number" id="sizeNum" min="3" max="120" step="1" value="24">
+        </div>
+      </div>
+      <div class="chips" id="size-presets">
+        <button type="button" class="chip" data-size="12">S</button>
+        <button type="button" class="chip" data-size="24">M</button>
+        <button type="button" class="chip" data-size="40">L</button>
+      </div>
+      <p class="info" id="size-readout" aria-live="polite"></p>
+    </section>
+
+    <section class="card" id="sec-bricks">
+      <h2><span class="n">4</span>Bricks</h2>
+      <div class="field two">
+        <div>
+          <label for="hollow">Inside</label>
+          <select id="hollow">
+            <option value="0">Solid</option><option value="1">Thin shell</option>
+            <option value="2" selected>Hollow (2 studs)</option><option value="3">Hollow (3 studs)</option>
+          </select>
+        </div>
+        <div>
+          <label for="quality">Optimise</label>
+          <select id="quality"><option value="fast">Fast</option><option value="balanced" selected>Balanced</option><option value="best">Best</option></select>
+        </div>
+      </div>
+      <div class="field two">
+        <div>
+          <label for="brickSet">Parts</label>
+          <select id="brickSet"><option value="common">Common bricks</option><option value="extended" selected>+ long &amp; 4×6</option></select>
+        </div>
+        <div>
+          <label for="color">Colour</label>
+          <div class="swatch-select"><i id="swatch"></i><select id="color"></select></div>
+        </div>
+      </div>
+      <details class="adv">
+        <summary>Advanced</summary>
+        <div class="field two">
+          <div>
+            <label for="seal">Hole sealing</label>
+            <select id="seal"><option value="auto">Auto</option><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="6">6</option><option value="8">8</option><option value="12">12</option></select>
+          </div>
+          <div>
+            <label for="ss">Detail</label>
+            <select id="ss"><option value="auto">Auto</option><option value="1">Low</option><option value="2">Medium</option><option value="3">High</option></select>
+          </div>
+        </div>
+        <div class="field two">
+          <div>
+            <label for="pillar">Support pillars</label>
+            <select id="pillar"><option value="0">None</option><option value="4">Every 4</option><option value="6" selected>Every 6</option><option value="8">Every 8</option></select>
+          </div>
+          <div>
+            <label for="maxPerStep">Parts per step</label>
+            <input type="number" id="maxPerStep" min="4" max="60" value="20">
+          </div>
+        </div>
+      </details>
+    </section>
+
+    <section class="card" id="sec-export">
+      <h2><span class="n">5</span>Export</h2>
+      <div class="btn-grid">
+        <button type="button" id="ex-bl" disabled>BrickLink XML</button>
+        <button type="button" id="ex-rb" disabled>Rebrickable CSV</button>
+        <button type="button" id="ex-ldr" disabled>LDraw model</button>
+        <button type="button" id="ex-csv" disabled>Parts list CSV</button>
+        <button type="button" id="ex-html" disabled>Instructions</button>
+        <button type="button" id="ex-png" disabled>Picture</button>
+      </div>
+      <div class="btn-grid light">
+        <label class="btn" for="prices">Import prices<input id="prices" type="file" accept=".csv,.json"></label>
+        <label class="btn" for="catfile">Load catalogue<input id="catfile" type="file" accept=".json"></label>
+      </div>
+      <p class="info small" id="export-info">Imports and exports stay on your computer — nothing is uploaded.</p>
+    </section>
+  </aside>
+
+  <!-- ======================= 3D stage ======================= -->
+  <section class="stage" id="stage" aria-label="3D view">
+    <div class="views" role="tablist" aria-label="View">
+      <button type="button" role="tab" data-view="raw" aria-selected="false">Scan</button>
+      <button type="button" role="tab" data-view="clean" aria-selected="false">Cleaned</button>
+      <button type="button" role="tab" data-view="bricks" aria-selected="true">Bricks</button>
+      <button type="button" role="tab" data-view="overlay" aria-selected="false">Overlay</button>
+      <button type="button" class="ghost fit" id="btn-fit" title="Reset the camera">Reset view</button>
+    </div>
+    <div id="viewport" tabindex="0"></div>
+    <div class="empty" id="empty">
+      <svg viewBox="0 0 64 64" aria-hidden="true"><rect x="8" y="26" width="48" height="26" rx="4" fill="currentColor" opacity=".9"/><rect x="14" y="14" width="12" height="13" rx="3" fill="currentColor" opacity=".9"/><rect x="38" y="14" width="12" height="13" rx="3" fill="currentColor" opacity=".9"/></svg>
+      <h2>Scan in, bricks out</h2>
+      <p>Drop a LiDAR scan of an object (10–50 cm) to get a brick model, parts list, cost estimate and build steps.</p>
+      <p class="muted">Everything runs on this computer, offline.</p>
+    </div>
+    <div class="status" id="status" hidden><div class="bar"><i id="bar"></i></div><span id="status-text"></span></div>
+    <div class="dims" id="dims" hidden></div>
+    <div class="stepbar" id="stepbar" hidden>
+      <button type="button" id="step-prev" aria-label="Previous step">‹</button>
+      <input type="range" id="step-range" min="1" max="1" value="1" aria-label="Build step">
+      <button type="button" id="step-next" aria-label="Next step">›</button>
+      <button type="button" id="step-play" aria-label="Play build">▶</button>
+      <span id="step-label" aria-live="polite"></span>
+      <button type="button" id="step-all" class="ghost">Done</button>
+    </div>
+  </section>
+
+  <!-- ======================= results ======================= -->
+  <aside class="results" aria-label="Results">
+    <div class="tabs" role="tablist">
+      <button type="button" role="tab" id="tab-report" aria-selected="true" aria-controls="panel-report">Report</button>
+      <button type="button" role="tab" id="tab-parts" aria-selected="false" aria-controls="panel-parts">Parts</button>
+      <button type="button" role="tab" id="tab-steps" aria-selected="false" aria-controls="panel-steps">Steps</button>
+    </div>
+    <div class="panel" id="panel-report" role="tabpanel"><p class="muted pad">Load a scan to see the checks.</p></div>
+    <div class="panel" id="panel-parts" role="tabpanel" hidden><p class="muted pad">The parts list appears here.</p></div>
+    <div class="panel" id="panel-steps" role="tabpanel" hidden><p class="muted pad">Build steps appear here.</p></div>
+  </aside>
+</main>
+
+<div class="drop-veil" id="veil" hidden>Drop your scan to load it</div>
+<div class="toast" id="toast" role="alert" hidden></div>
+
+<dialog id="help">
+  <form method="dialog">
+    <h2>How BrickScan works</h2>
+    <ol>
+      <li><b>Scan</b> the object with a LiDAR phone app (Polycam, Scaniverse, 3D Scanner App) on a flat, plain surface, indoors, and export <b>OBJ, PLY, USDZ or GLB</b>. Geometry is used; colours and textures are ignored.</li>
+      <li><b>Load</b> the file. BrickScan removes the floor and background, drops noise, lines the object up with the stud grid and seals holes.</li>
+      <li><b>Choose a size</b> by height, width, longest side or a brick budget.</li>
+      <li>The solid shape is converted into <b>standard bricks</b> with staggered joints, hollowed where nobody will see, and checked: every brick connected, supported from below, no overlaps.</li>
+      <li><b>Export</b> a BrickLink wanted-list XML, a Rebrickable CSV, an LDraw file for BrickLink Studio / LDCad, or printable step-by-step instructions.</li>
+    </ol>
+    <p class="muted">Everything runs locally in this page, with a built-in parts catalogue. Prices are offline estimates — import your own price list for an accurate cart total.</p>
+    <button class="primary" value="close">Got it</button>
+  </form>
+</dialog>
+
+<script type="text/plain" id="worker-src">/*WORKER*/</script>
+<script>/*SCRIPT*/</script>
+</body>
+</html>

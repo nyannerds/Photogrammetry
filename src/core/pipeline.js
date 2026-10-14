@@ -21,6 +21,7 @@ export const DEFAULT_BUILD = {
   maxPerStep: 20,
   ss: 'auto',            // voxelisation supersampling: 'auto' (3 for small grids, else 2) or 1-3
   threshold: 0.5,        // fraction of a cell that must be inside the scan to count as solid
+  smooth: true,          // remove one-voxel speckle from the solid
 };
 
 export const MAX_CELLS = 4_000_000;
@@ -58,7 +59,7 @@ async function buildOnce(clean, p, catalogue, job, { quick = false } = {}) {
   if (job) job.progress('voxel', 0, 'Voxelising and filling the solid…');
   const ss = quick ? 1 : p.ss === 'auto' ? (nx * ny * nz <= 90000 ? 3 : 2) : p.ss;
   const vox = await voxelizeScan(clean, {
-    mmPerUnit: clean.mmPerUnit, k: plan.k, dims: plan.dims, ss, seal: p.seal, threshold: p.threshold,
+    mmPerUnit: clean.mmPerUnit, k: plan.k, dims: plan.dims, ss, seal: p.seal, threshold: p.threshold, smooth: p.smooth,
   }, job);
   const t1 = now();
   const hollowed = hollowSolid(vox.solid, vox.dims, p.hollow, p.pillar);

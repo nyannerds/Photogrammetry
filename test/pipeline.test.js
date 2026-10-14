@@ -31,6 +31,19 @@ test('R2: floor, wall, clutter and specks are removed; the object survives with 
   }
 });
 
+test('R2: the floor height can be set by hand when auto-detection is not what the user wants', async () => {
+  const auto = await run('shoebox', {}, {}, { value: 20 });
+  const f = auto.clean.floor;
+  const frac = (f.y - f.range[0]) / (f.range[1] - f.range[0]);
+  const manual = await run('shoebox', {}, { floorAt: frac }, { value: 20 });
+  assert.ok(manual.clean.floor.manual);
+  assert.ok(Math.abs(manual.clean.floor.y - f.y) < 1e-6);
+  assert.equal(manual.model.dims.join('x'), auto.model.dims.join('x'));
+  // a floor cut far too high slices the object: the result gets visibly shorter
+  const high = await run('shoebox', {}, { floorAt: frac + 0.07 }, { value: 20 });
+  assert.ok(high.clean.sizeMM[1] < auto.clean.sizeMM[1] - 20, `${high.clean.sizeMM[1]} vs ${auto.clean.sizeMM[1]}`);
+});
+
 test('R2: scan orientation, unit and yaw do not matter (Z-up, centimetres, rotated 37°)', async () => {
   const { clean, model } = await run('shoebox', { up: '+z', units: 'cm', yawDeg: 37 }, {}, { value: 24 });
   assert.equal(clean.unit, 'cm');

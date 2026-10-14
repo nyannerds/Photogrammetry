@@ -260,6 +260,29 @@ function debiasSurface(S, DX, DY, DZ, near, pos, idx, map) {
   return removals.length;
 }
 
+/** Remove one-voxel speckle: a cell flips when at least `need` of its six face neighbours disagree with it. */
+export function denoiseSolid(solid, nx, ny, nz, need = 5, passes = 1) {
+  const sy = nx * nz;
+  let changed = 0;
+  for (let p = 0; p < passes; p++) {
+    const flips = [];
+    for (let y = 0; y < ny; y++) for (let z = 0; z < nz; z++) for (let x = 0; x < nx; x++) {
+      const c = y * sy + z * nx + x;
+      const v = solid[c];
+      let diff = 0;
+      // cells outside the grid count as empty, except directly below the floor (the model stands on the ground)
+      diff += (x > 0 ? solid[c - 1] : 0) !== v; diff += (x + 1 < nx ? solid[c + 1] : 0) !== v;
+      diff += (z > 0 ? solid[c - nx] : 0) !== v; diff += (z + 1 < nz ? solid[c + nx] : 0) !== v;
+      diff += (y > 0 ? solid[c - sy] : v) !== v; diff += (y + 1 < ny ? solid[c + sy] : 0) !== v;
+      if (diff >= need) flips.push(c);
+    }
+    for (const c of flips) solid[c] = solid[c] ? 0 : 1;
+    changed += flips.length;
+    if (!flips.length) break;
+  }
+  return changed;
+}
+
 /** Keep the largest 6-connected set of solid cells; returns number of cells dropped. */
 export function keepLargestComponent(solid, nx, ny, nz) {
   const n = solid.length;
@@ -391,6 +414,7 @@ export async function voxelizeScan(scan, spec, job) {
     if (!suspicious) { best = cand; break; }
   }
   const { solid, soft } = best;
+  const smoothed = spec.smooth === false ? 0 : denoiseSolid(solid, nx, ny, nz, 5, 1);
   const cc = keepLargestComponent(solid, nx, ny, nz);
   if (cc.dropped) warnings.push(`Dropped ${cc.dropped} voxels in ${cc.pieces - 1} detached fragment(s).`);
   let count = 0;
@@ -400,6 +424,6 @@ export async function voxelizeScan(scan, spec, job) {
 
   return {
     solid, soft, dims: [nx, ny, nz], ss, seal: best.r, warnings,
-    stats: { surfaceCells, fineCells: total, solidVoxels: count, cavityFraction: best.ratio, droppedFragments: cc.pieces - 1 },
+    stats: { smoothed, surfaceCells, fineCells: total, solidVoxels: count, cavityFraction: best.ratio, droppedFragments: cc.pieces - 1 },
   };
 }

@@ -215,6 +215,14 @@ export function fillComponentBounds(comps, label, idx, pos) {
   }
 }
 
+/** Robust vertical range (0.2%–99.8%) of a Y-up point set. */
+export function heightRange(pts) {
+  const n = pts.length / 3;
+  const ys = new Float32Array(n);
+  for (let i = 0; i < n; i++) ys[i] = pts[i * 3 + 1];
+  return percentileRange(ys, 0.002, 0.998);
+}
+
 /** Weighted histogram helper used by up-axis and floor detection. */
 function weightedHistogram(values, weights, lo, hi, bins) {
   const h = new Float64Array(bins);
