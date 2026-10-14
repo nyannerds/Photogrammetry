@@ -1,0 +1,17 @@
+{
+  "name": "brickscan",
+  "version": "1.0.0",
+  "description": "Offline, single-file browser app that turns a phone LiDAR scan into a buildable LEGO brick model (parts list, cost estimate, build steps, LDraw export).",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "node --test test/*.test.js",
+    "test:browser": "node test/browser.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2",
+    "playwright-core": "1.64.0",
+    "three": "0.186.1"
+  }
+}
